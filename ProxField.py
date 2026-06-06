@@ -350,7 +350,7 @@ def draw_card_grid(c, cards_with_images, page_width, page_height, card_w, card_h
             preserveAspectRatio=True
         )
 
-def build_pdf(deck_list: list[str], remote: bool, output_path: str = "proxies.pdf", progress_var: tk.DoubleVar = None, token_data: dict=None):
+def build_pdf(deck_list: list[str], remote: bool, output_path: str = "proxies.pdf", progress_var: tk.DoubleVar = None, token_data: dict=None, two_sided: bool = True):
     """
     Builds a proxy PDF from a deck list.
     Front pages: 3x3 grid of card fronts.
@@ -370,12 +370,8 @@ def build_pdf(deck_list: list[str], remote: bool, output_path: str = "proxies.pd
     y_margin = (page_height - grid_height) / 2
 
     c = canvas.Canvas(output_path, pagesize=letter)
-    total_cards = len(deck_list)
-    total_pages = math.ceil(total_cards / CARDS_PER_PAGE)
 
-    print(f"\nBuilding PDF: {total_cards} cards, {total_pages} front page(s) + {total_pages} back page(s)...")
-
-    # Fetch all images upfront so we can build front and back pages together
+    # Fetch all card images first
     all_images = []
     for idx, card in enumerate(deck_list):
         print(f"[{idx + 1}/{len(deck_list)}] Fetching '{card['name']}'...")
@@ -386,6 +382,8 @@ def build_pdf(deck_list: list[str], remote: bool, output_path: str = "proxies.pd
         all_images.append(imgs)
         if progress_var is not None:
             progress_var.set((idx + 1) / len(deck_list) * 80)
+
+    # Append token images if provided
     if token_data is not None:
         print("\nFetching token images...")
         token_images = get_tokens_for_pdf(token_data)
@@ -393,9 +391,12 @@ def build_pdf(deck_list: list[str], remote: bool, output_path: str = "proxies.pd
 
     if progress_var is not None:
         progress_var.set(90)
-        print("\n")
 
-    # Build pages in front/back pairs
+    # Now that all_images is fully built, calculate pages
+    total_pages = math.ceil(len(all_images) / CARDS_PER_PAGE)
+    page_desc = f"{total_pages} front page(s) + {total_pages} back page(s)" if two_sided else f"{total_pages} page(s)"
+    print(f"\nBuilding PDF: {len(all_images)} cards, {page_desc}...")
+
     for page_num in range(total_pages):
         page_slice = all_images[page_num * CARDS_PER_PAGE : (page_num + 1) * CARDS_PER_PAGE]
 
@@ -404,29 +405,29 @@ def build_pdf(deck_list: list[str], remote: bool, output_path: str = "proxies.pd
         draw_card_grid(c, front_images, page_width, page_height, card_w, card_h, x_margin, y_margin, gap)
         c.showPage()
 
-        # --- Back page ---
-        back_images = []
-        for row in range(CARDS_PER_COL):
-            row_slice = page_slice[row * CARDS_PER_ROW : (row + 1) * CARDS_PER_ROW]
-            row_backs = [imgs[1] if len(imgs) > 1 else imgs[0] for imgs in row_slice]
-            while len(row_backs) < CARDS_PER_ROW:
-                row_backs.append(None)
-            back_images.extend(reversed(row_backs))
+        # --- Back page (only if two_sided is on) ---
+        if two_sided:
+            back_images = []
+            for row in range(CARDS_PER_COL):
+                row_slice = page_slice[row * CARDS_PER_ROW : (row + 1) * CARDS_PER_ROW]
+                row_backs = [imgs[1] if len(imgs) > 1 else imgs[0] for imgs in row_slice]
+                while len(row_backs) < CARDS_PER_ROW:
+                    row_backs.append(None)
+                back_images.extend(reversed(row_backs))
+            draw_card_grid(c, back_images, page_width, page_height, card_w, card_h, x_margin, y_margin, gap)
+            c.showPage()
 
-        draw_card_grid(c, back_images, page_width, page_height, card_w, card_h, x_margin, y_margin, gap)
-        c.showPage()
-
-        # Update progress bar: building pages = 90-100% of progress
         if progress_var is not None:
             progress_var.set(90 + (page_num + 1) / total_pages * 10)
 
+    # c.save() moved outside the loop so it only runs once after all pages are built
     c.save()
 
-    # Set progress to 100% when done
     if progress_var is not None:
         progress_var.set(100)
 
     print(f"\nPDF saved to: {output_path}")
+
 
 def ProxyField():
     # First, Arg handling and variable initiation
@@ -445,6 +446,7 @@ def ProxyField():
     parser.add_argument("-b", "--basic-lands", action="store_true", help="Filter out basic lands (don't include them in PDF)")
     parser.add_argument("-l","--enable-local",action="store_true",help="searches local card images in ./storage/ before asking scryfall")
     parser.add_argument("-t", "--tokens", action="store_true", help="adds all tokens to the pdf")
+    parser.add_argument("-2", "--two-sided", action="store_true", help="Generate back pages for double sided printing")
 
     args = parser.parse_args()
 
@@ -483,7 +485,7 @@ def ProxyField():
     pdf_file_name = "proxies.pdf"
     if args.name is not None:
         pdf_file_name = args.name
-    build_pdf(deck_list, remote, pdf_file_name, token_data=data if token_filter else None)
+    build_pdf(deck_list, remote, pdf_file_name, token_data=data if token_filter else None, two_sided=args.two_sided)
 
 def PFGUI():
     disable_local = False
@@ -491,10 +493,12 @@ def PFGUI():
     deck_data = {}
     basic_land_filter = False
     token_filter = False
+    two_sided = False
 
     # --- internal functions (buttons) ---
     def submit():
-        nonlocal basic_land_filter, token_filter
+        nonlocal basic_land_filter, token_filter, two_sided
+        two_sided = two_sided_gui_input.get()
         url_string = str(url_gui_input.get())
         basic_land_filter = land_filter_gui_input.get()
         token_filter = tokens_gui_input.get()
@@ -550,7 +554,9 @@ def PFGUI():
         def build():
             nonlocal deck_data
             try:
-                build_pdf(deck_list, disable_local, file_name, progress_var, token_data=deck_data if token_filter else None)
+                build_pdf(deck_list, disable_local, file_name, progress_var,
+                    token_data=deck_data if token_filter else None,
+                    two_sided=two_sided)
                 root.after(0, on_build_done)
             except Exception as e:
                 root.after(0, lambda err=e: on_build_error(str(err)))
@@ -622,6 +628,18 @@ def PFGUI():
                    selectcolor="green",
                    relief="raised",
                    padx=10, pady=5).grid(row=4, column=3)
+
+    # Two Sided Printing Check Box
+    two_sided_gui_input = tk.BooleanVar(value=True)  # default on since we built the PDF around it
+    tk.Checkbutton(root,
+               text="Two Sided Printing",
+               variable=two_sided_gui_input,
+               onvalue=True, offvalue=False,
+               bg="lightgrey", fg="blue",
+               font=("calibre", 8),
+               selectcolor="green",
+               relief="raised",
+               padx=10, pady=5).grid(row=5, column=3)
 
     # URL label and entry
     tk.Label(root, text='URL: ', font=('calibre', 10, 'bold')).grid(row=1, column=1)
