@@ -5,7 +5,10 @@ Takes a moxhub URL and creates a PDF in 8.5x11 format that can be printed for pr
 ## TODO - ProxyHub.py
 Bug Fixes
  - fix the tokens feature  
-- remove vestigial flags (commander, favorites and verbose)
+ - switch from using names to using scryfall IDs so it uses the art used in the moxfield decklist
+ - remove vestigial flags (commander, favorites and verbose)
+ - fix this error
+            HTTPSConnectionPool(host='api.scryfall.com', port=443): Read timed out. (read timeout=1)
 
 User Input
  - could take plaintext export as input instead of URL 
@@ -24,9 +27,6 @@ Optional non-persistent features (optional)
  - create a drop down menu for input type and have support for more websites and plaintext
 
  Very Last things
- - create an account on some tipping cite instead of using venmo in the help menu
- - Open Source on GitHub
  - Package as an application that can be downloaded and ran
  - post on r/proxies and other appropriate subreddits
-
 

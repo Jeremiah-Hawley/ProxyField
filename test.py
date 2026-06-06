@@ -33,88 +33,10 @@ PROGRESS        = 0 #store progress bar value here
 DECK_SIZE       = 0 #store decklist size here
 BASIC_LANDS = ["Plains", "Island", "Swamp", "Mountain", "Forest"]
 land_filter = False #has to be declared here and changed later
-SCRYFALL_HEADERS = {
-    "User-Agent": "ProxyField/1.0 (personal proxy printing tool)",
-    "Accept": "application/json"
-}
 
+token_filter = True
+def get_tokens_for_pdf(deck_url: str) -> list[list[Image.Image]]:
 
-def get_tokens_for_pdf(data: dict) -> list[list[Image.Image]]:
-    token_board = data.get("tokens", [])
-    if not token_board:
-        print(" [Tokens] No tokens found in deck.")
-        return []
-
-    seen_ids = set()
-    token_images = []
-
-    for card in token_board:
-        #check if token
-        if not card.get("isToken", False):
-            continue #if not, skip!
-
-        scryfall_id = card.get("scryfall_id", "")
-        name = card.get("name", "Unkown Token")
-
-        #make sure it's unique
-        if scryfall_id in seen_ids:
-            continue
-        seen_ids.add(scryfall_id)
-
-        print(f" [Tokens] Fetching token '{name}'...")
-
-        try:
-            response = requests.get(
-                    f"https://api.scryfall.com/cards/{scryfall_id}",
-                    headers=SCRYFALL_HEADERS,
-                    timeout = (2,5)
-                    )
-            response.raise_for_status()
-            token_data = response.json()
-            sleep(SLEEP_AMOUNT)
-
-            image_uris = token_data.get("image_uris")
-
-            #single faced token
-            if image_uris:
-                image_url = (
-                        image_uris.get("png") or
-                        image_uris.get("large") or
-                        image_uris.get("normal")
-                        )
-                img_response = requests.get(image_url, headers=SCRYFALL_HEADERS, timeout=(5, 60))
-                img_response.raise_for_status()
-                token_images.append([Image.open(BytesIO(img_response.content))])
-            
-            #double faced token
-            else:
-                card_faces = token_data.get("card_faces", [])
-                if card_faces:
-                    images = []
-                    for face in card_faces:
-                        face_uris = face.get("image_uris", {})
-                        face_url = (
-                            face_uris.get("png") or
-                            face_uris.get("large") or
-                            face_uris.get("normal")
-                        )
-                        if face_url:
-                            img_response = requests.get(face_url, headers=SCRYFALL_HEADERS, timeout=(5, 60))
-                            img_response.raise_for_status()
-                            images.append(Image.open(BytesIO(img_response.content)))
-                    if images:
-                        token_images.append(images)
-                else:
-                    print(f"  [Tokens] No image found for token '{name}'")
-
-        except Exception as e:
-            print(f"  [Tokens] Failed to fetch token '{name}': {e}")
-
-    print(f"  [Tokens] Fetched {len(token_images)} unique token(s).")
-
-    return token_images
-
-def read_url(deck_url: str, land_filter: bool) -> tuple[list[dict], dict]:
     match = re.search(r"moxfield\.com/decks/([A-Za-z0-9_-]+)", deck_url)
     if match:
         deck_id = match.group(1)
@@ -124,6 +46,7 @@ def read_url(deck_url: str, land_filter: bool) -> tuple[list[dict], dict]:
         raise ValueError(f"Could not extract a deck ID from: {deck_url!r}")
 
     api_url = f"https://api2.moxfield.com/v2/decks/all/{deck_id}"
+
     response = curl_requests.get(api_url, impersonate="chrome120", timeout=10)
 
     if response.status_code == 403:
@@ -134,27 +57,105 @@ def read_url(deck_url: str, land_filter: bool) -> tuple[list[dict], dict]:
     response.raise_for_status()
     data = response.json()
 
+
+    #create a list of ids
+    token_list = []
+    token_board = data.get("tokens", [])  # default to [] not {}
+    for card in token_board:              # iterate directly, no .values()
+        card_is_token = card.get("isToken", False)
+        if card_is_token == True:
+            token_list.append(card.get("scryfall_id", "something is wrong"))
+
+    #turn that into a list of images
+    token_images = []
+
+    for token in token_list:
+        try:
+            response = requests.get(
+                f"https://api.scryfall.com/cards/{token}",
+                timeout=1)
+            response.raise_for_status()
+            data = response.json()
+
+            image_uris = data.get("image_uris")
+
+            # Single faced card
+            if image_uris:
+                image_url = (
+                    image_uris.get("png") or
+                    image_uris.get("large") or
+                    image_uris.get("normal")
+                )
+                img_response = requests.get(image_url, timeout=1)
+                img_response.raise_for_status()
+                token_images.append([Image.open(BytesIO(img_response.content))])
+
+        # Double-faced card — fetch both faces
+            card_faces = data.get("card_faces", [])
+            if card_faces:
+                images = []
+                for face in card_faces:
+                    face_uris = face.get("image_uris", {})
+                    face_url = (
+                        face_uris.get("png") or
+                        face_uris.get("large") or
+                        face_uris.get("normal")
+                    )
+                    if face_url:
+                        img_response = requests.get(face_url, timeout=1)
+                        img_response.raise_for_status()
+                        images.append(Image.open(BytesIO(img_response.content)))
+                if images:
+                    token_images.append(images)
+
+            print(f"  [Scryfall] No image URLs found for '{token}'")
+
+        except Exception as e:
+            print(f"  [Scryfall] Failed to fetch '{token}': {e}")
+    
+    return token_images
+
+
+def read_url(deck_url: str, land_filter: bool) -> list[str]:
+    match = re.search(r"moxfield\.com/decks/([A-Za-z0-9_-]+)", deck_url)
+    if match:
+        deck_id = match.group(1)
+    elif re.fullmatch(r"[A-Za-z0-9_-]+", deck_url):
+        deck_id = deck_url
+    else:
+        raise ValueError(f"Could not extract a deck ID from: {deck_url!r}")
+
+    api_url = f"https://api2.moxfield.com/v2/decks/all/{deck_id}"
+
+    response = curl_requests.get(api_url, impersonate="chrome120", timeout=10)
+
+    if response.status_code == 403:
+        raise SystemExit("[ERROR] Moxfield returned 403 Forbidden — the deck may be private.")
+    if response.status_code == 404:
+        raise SystemExit(f"[ERROR] Deck not found: {deck_id}")
+
+    response.raise_for_status()
+    data = response.json()
+
+
     boards_to_include = ["mainboard", "sideboard", "commanders", "companions", "signatureSpells", "attractions"]
     card_lines = []
     for board_name in boards_to_include:
         board = data.get(board_name, {})
         for card_entry in board.values():
             quantity = card_entry.get("quantity", 1)
-            card = card_entry["card"]
+            card_name = card_entry["card"]["name"]
             for _ in range(quantity):
-                # Store both name and scryfall_id together as a dict
-                card_lines.append({
-                    "name": card["name"],
-                    "scryfall_id": card.get("scryfall_id", "")
-                })
+                card_lines.append(card_name)
+        if not card_lines:
+            raise ValueError(f"Deck '{deck_id}' appears to be empty or could not be parsed.")
 
-    if not card_lines:
-        raise ValueError(f"Deck '{deck_id}' appears to be empty or could not be parsed.")
+    card_lines = [card for card in card_lines if card not in BASIC_LANDS] if land_filter else card_lines
 
-    if land_filter:
-        card_lines = [c for c in card_lines if c["name"] not in BASIC_LANDS]
+    DECK_SIZE = len(card_lines) #update DECK_SIZE
 
-    return card_lines, data
+    return card_lines
+
 def read_decklist_file(path: str) -> list[str]:
     decklist = []
     if url_input[-4:] != ".txt":
@@ -186,15 +187,19 @@ def get_local_image_path(card_name: str) -> str | None:
             return path
     return None
 
-def get_scryfall_images(card_name: str, card_id: str) -> list[Image.Image]:
+def get_token_scryfall_imagesfall_images(card_id: str) ->list[Image.Image]:
+    return 0
+
+def get_scryfall_images(card_name: str) -> list[Image.Image]:
     """
     Fetches card image(s) from Scryfall.
     Returns a list with one image for normal cards, two for double-faced cards.
     """
     try:
         response = requests.get(
-            f"https://api.scryfall.com/cards/{card_id}",
-            timeout=(2,5)
+            "https://api.scryfall.com/cards/named",
+            params={"fuzzy": card_name},
+            timeout=10
         )
         response.raise_for_status()
         data = response.json()
@@ -208,8 +213,7 @@ def get_scryfall_images(card_name: str, card_id: str) -> list[Image.Image]:
                 image_uris.get("large") or
                 image_uris.get("normal")
             )
-            img_response = requests.get(image_url, timeout=(2,5))
-
+            img_response = requests.get(image_url, timeout=10)
             img_response.raise_for_status()
             return [Image.open(BytesIO(img_response.content))]
 
@@ -225,7 +229,7 @@ def get_scryfall_images(card_name: str, card_id: str) -> list[Image.Image]:
                     face_uris.get("normal")
                 )
                 if face_url:
-                    img_response = requests.get(face_url, timeout=(2,5))
+                    img_response = requests.get(face_url, timeout=10)
                     img_response.raise_for_status()
                     images.append(Image.open(BytesIO(img_response.content)))
             if images:
@@ -238,77 +242,17 @@ def get_scryfall_images(card_name: str, card_id: str) -> list[Image.Image]:
         print(f"  [Scryfall] Failed to fetch '{card_name}': {e}")
         return []
 
-def get_scryfall_images_by_id(scryfall_id: str, card_name: str) -> list[Image.Image]:
-    try:
-        response = requests.get(
-            f"https://api.scryfall.com/cards/{scryfall_id}",
-            headers=SCRYFALL_HEADERS,
-            timeout=(5, 30)
-        )
-        response.raise_for_status()
-        data = response.json()
-        sleep(SLEEP_AMOUNT)
-
-    except Exception as e:
-        print(f"  [Scryfall] ID lookup failed for '{card_name}', falling back to name search: {e}")
-        try:
-            response = requests.get(
-                "https://api.scryfall.com/cards/named",
-                params={"fuzzy": card_name},
-                headers=SCRYFALL_HEADERS,
-                timeout=(5, 30)
-            )
-            response.raise_for_status()
-            data = response.json()
-            sleep(SLEEP_AMOUNT)
-        except Exception as e2:
-            print(f"  [Scryfall] Name search also failed for '{card_name}': {e2}")
-            return []
-
-    image_uris = data.get("image_uris")
-
-    if image_uris:
-        image_url = (
-            image_uris.get("png") or
-            image_uris.get("large") or
-            image_uris.get("normal")
-        )
-        img_response = requests.get(image_url, headers=SCRYFALL_HEADERS, timeout=(5, 60))
-        img_response.raise_for_status()
-        return [Image.open(BytesIO(img_response.content))]
-
-    card_faces = data.get("card_faces", [])
-    if card_faces:
-        images = []
-        for face in card_faces:
-            face_uris = face.get("image_uris", {})
-            face_url = (
-                face_uris.get("png") or
-                face_uris.get("large") or
-                face_uris.get("normal")
-            )
-            if face_url:
-                img_response = requests.get(face_url, headers=SCRYFALL_HEADERS, timeout=(5, 60))
-                img_response.raise_for_status()
-                images.append(Image.open(BytesIO(img_response.content)))
-        if images:
-            return images
-
-    print(f"  [Scryfall] No image URLs found for '{card_name}'")
-    return []
-def get_card_images(card: dict, remote: bool) -> list[Image.Image]:
+def get_card_images(card_name: str, remote: bool) -> list[Image.Image]:
     """
-    Returns a list of PIL Images for the given card.
+    Returns a list of PIL Images for the given card name.
     Single-faced cards return [front, card_back_image].
     Double-faced cards return [front_face, back_face].
     If remote is True:  Scryfall only.
-    If remote is False: local first, Scryfall as fallback.
+    If remote is False: local first (single image), Scryfall as fallback.
     """
-    card_name = card["name"]
-    scryfall_id = card.get("scryfall_id", "")
-
+    # Load the generic card back once, crash gracefully if it's missing
     if not os.path.exists(CARD_BACK_PATH):
-        raise SystemExit(f"[ERROR] Card back image not found at '{CARD_BACK_PATH}'.")
+        raise SystemExit(f"[ERROR] Card back image not found at '{CARD_BACK_PATH}'. Please add one.")
     card_back = Image.open(CARD_BACK_PATH)
 
     if not remote:
@@ -317,17 +261,18 @@ def get_card_images(card: dict, remote: bool) -> list[Image.Image]:
             print(f"  [Local] Found '{card_name}'")
             return [Image.open(local_path), card_back]
         print(f"  [Local] '{card_name}' not found locally, trying Scryfall...")
+    print(f"  [Scryfall] Fetching '{card_name}'...")
+    scryfall_images = get_scryfall_images(card_name)
+    time.sleep(SLEEP_AMOUNT)
 
-    print(f"  [Scryfall] Fetching '{card_name}' by ID...")
-    scryfall_images = get_scryfall_images_by_id(scryfall_id, card_name)
-
+    # DFC — already has both faces from Scryfall
     if len(scryfall_images) > 1:
-        return scryfall_images  # DFC — has its own back face
+        return scryfall_images
+
+    # Single faced — pair with generic card back
     if len(scryfall_images) == 1:
-        return [scryfall_images[0], card_back]  # single faced — use generic back
-
+        return [scryfall_images[0], card_back]
     return []
-
 
 def draw_card_grid(c, cards_with_images, page_width, page_height, card_w, card_h, x_margin, y_margin, gap):
     """Draws a single page grid of up to 9 card images. None entries are skipped (blank cell)."""
@@ -350,7 +295,7 @@ def draw_card_grid(c, cards_with_images, page_width, page_height, card_w, card_h
             preserveAspectRatio=True
         )
 
-def build_pdf(deck_list: list[str], remote: bool, output_path: str = "proxies.pdf", progress_var: tk.DoubleVar = None, token_data: dict=None):
+def build_pdf(deck_list: list[str], remote: bool, output_path: str = "proxies.pdf", progress_var: tk.DoubleVar = None):
     """
     Builds a proxy PDF from a deck list.
     Front pages: 3x3 grid of card fronts.
@@ -377,23 +322,20 @@ def build_pdf(deck_list: list[str], remote: bool, output_path: str = "proxies.pd
 
     # Fetch all images upfront so we can build front and back pages together
     all_images = []
-    for idx, card in enumerate(deck_list):
-        print(f"[{idx + 1}/{len(deck_list)}] Fetching '{card['name']}'...")
-        imgs = get_card_images(card, remote)
-        if not imgs:
-            print(f"\n[ERROR] Could not find an image for '{card['name']}'. Aborting.")
-            raise SystemExit(1)
-        all_images.append(imgs)
-        if progress_var is not None:
-            progress_var.set((idx + 1) / len(deck_list) * 80)
-    if token_data is not None:
-        print("\nFetching token images...")
-        token_images = get_tokens_for_pdf(token_data)
-        all_images.extend(token_images)
+    for idx, card_entry in enumerate(deck_list):
+        card_name = get_card_name_from_entry(card_entry)
+        print(f"[{idx + 1}/{total_cards}] Fetching '{card_name}'...")
+        imgs = get_card_images(card_name, remote)
 
-    if progress_var is not None:
-        progress_var.set(90)
-        print("\n")
+        if not imgs:
+            print(f"\n[ERROR] Could not find an image for '{card_name}'. Aborting.")
+            raise SystemExit(1)
+
+        all_images.append(imgs)
+
+        # Update progress bar: fetching images = 0-90% of progress
+        if progress_var is not None:
+            progress_var.set((idx + 1) / total_cards * 90)
 
     # Build pages in front/back pairs
     for page_num in range(total_pages):
@@ -473,28 +415,24 @@ def ProxyField():
 
     # tags read, now need to create the deck list
     if from_url:
-        deck_list, data = read_url(deck_url, land_filter)
+        deck_list = read_url(deck_url, land_filter)
     elif from_file:
         deck_list = read_decklist_file(deck_filepath)
-        data = None
 
 
     # now that we have the deck list we need to find the pictures and put them into a pdf
     pdf_file_name = "proxies.pdf"
     if args.name is not None:
         pdf_file_name = args.name
-    build_pdf(deck_list, remote, pdf_file_name, token_data=data if token_filter else None)
+
+    build_pdf(deck_list, remote, pdf_file_name)
 
 def PFGUI():
     disable_local = False
     deck_list = []
-    deck_data = {}
-    basic_land_filter = False
-    token_filter = False
 
     # --- internal functions (buttons) ---
     def submit():
-        nonlocal basic_land_filter, token_filter
         url_string = str(url_gui_input.get())
         basic_land_filter = land_filter_gui_input.get()
         token_filter = tokens_gui_input.get()
@@ -512,9 +450,9 @@ def PFGUI():
         nonlocal deck_list
 
         def fetch():
-            nonlocal deck_list, deck_data
+            nonlocal deck_list
             try:
-                deck_list, deck_data = read_url(url_string, basic_land_filter)
+                deck_list = read_url(url_string, basic_land_filter, token_filter)
                 # Schedule UI update back on the main thread
                 root.after(0, on_fetch_done)
             except Exception as e:
@@ -548,9 +486,8 @@ def PFGUI():
         status_label.config(text="Building PDF...")
 
         def build():
-            nonlocal deck_data
             try:
-                build_pdf(deck_list, disable_local, file_name, progress_var, token_data=deck_data if token_filter else None)
+                build_pdf(deck_list, disable_local, file_name, progress_var)
                 root.after(0, on_build_done)
             except Exception as e:
                 root.after(0, lambda err=e: on_build_error(str(err)))
@@ -646,5 +583,6 @@ def PFGUI():
     # Run app
     root.mainloop()
 
-
-ProxyField()
+test_variable = get_tokens_for_pdf("https://moxfield.com/decks/OXRn8IrSM06XxzbCfIlarw")
+print(len(test_variable))
+print(test_variable)
