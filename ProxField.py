@@ -30,7 +30,6 @@ CARDS_PER_ROW   = 3
 CARDS_PER_COL   = 3
 CARDS_PER_PAGE  = CARDS_PER_ROW * CARDS_PER_COL
 PROGRESS        = 0 #store progress bar value here
-DECK_SIZE       = 0 #store decklist size here
 BASIC_LANDS = ["Plains", "Island", "Swamp", "Mountain", "Forest"]
 land_filter = False #has to be declared here and changed later
 
@@ -134,8 +133,6 @@ def read_url(deck_url: str, land_filter: bool) -> list[str]:
             raise ValueError(f"Deck '{deck_id}' appears to be empty or could not be parsed.")
 
     card_lines = [card for card in card_lines if card not in BASIC_LANDS] if land_filter else card_lines
-
-    DECK_SIZE = len(card_lines) #update DECK_SIZE
 
     return card_lines
 
@@ -415,6 +412,7 @@ def ProxyField():
 def PFGUI():
     disable_local = False
     deck_list = []
+    token_filter = False
 
     # --- internal functions (buttons) ---
     def submit():
