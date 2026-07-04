@@ -98,7 +98,7 @@ def get_tokens_for_pdf(deck_url: str) -> list[list[Image.Image]]:
 """
 
 
-def read_url(deck_url: str, land_filter: bool) -> list[str]:
+def read_url(deck_url: str, land_filter: bool) -> list[dict]:
     match = re.search(r"moxfield\.com/decks/([A-Za-z0-9_-]+)", deck_url)
     if match:
         deck_id = match.group(1)
@@ -126,13 +126,15 @@ def read_url(deck_url: str, land_filter: bool) -> list[str]:
         board = data.get(board_name, {})
         for card_entry in board.values():
             quantity = card_entry.get("quantity", 1)
-            card_name = card_entry["card"]["name"]
+            card_data = card_entry["card"]
+            card_name = card_data["name"]
+            scryfall_id = card_data.get("id", "")
             for _ in range(quantity):
-                card_lines.append(card_name)
+                card_lines.append({"name": card_name, "scryfall_id": scryfall_id})
         if not card_lines:
             raise ValueError(f"Deck '{deck_id}' appears to be empty or could not be parsed.")
 
-    card_lines = [card for card in card_lines if card not in BASIC_LANDS] if land_filter else card_lines
+    card_lines = [card for card in card_lines if card["name"] not in BASIC_LANDS] if land_filter else card_lines
 
     return card_lines
 
@@ -223,9 +225,9 @@ def get_scryfall_images(card_name: str) -> list[Image.Image]:
         print(f"  [Scryfall] Failed to fetch '{card_name}': {e}")
         return []
 
-def get_card_images(card_name: str, remote: bool) -> list[Image.Image]:
+def get_card_images(card_name: str, scryfall_id: str, remote: bool) -> list[Image.Image]:
     """
-    Returns a list of PIL Images for the given card name.
+    Returns a list of PIL Images for the given card name and scryfall_id.
     Single-faced cards return [front, card_back_image].
     Double-faced cards return [front_face, back_face].
     If remote is True:  Scryfall only.
@@ -277,7 +279,7 @@ def draw_card_grid(c, cards_with_images, page_width, page_height, card_w, card_h
             preserveAspectRatio=True
         )
 
-def build_pdf(deck_list: list[str], remote: bool, output_path: str = "proxies.pdf", progress_var: tk.DoubleVar = None):
+def build_pdf(deck_list: list[dict], remote: bool, output_path: str = "proxies.pdf", progress_var: tk.DoubleVar = None):
     """
     Builds a proxy PDF from a deck list.
     Front pages: 3x3 grid of card fronts.
@@ -304,10 +306,11 @@ def build_pdf(deck_list: list[str], remote: bool, output_path: str = "proxies.pd
 
     # Fetch all images upfront so we can build front and back pages together
     all_images = []
-    for idx, card_entry in enumerate(deck_list):
-        card_name = get_card_name_from_entry(card_entry)
+    for idx, card_data in enumerate(deck_list):
+        card_name = card_data["name"]
+        scryfall_id = card_data.get("scryfall_id", "")
         print(f"[{idx + 1}/{total_cards}] Fetching '{card_name}'...")
-        imgs = get_card_images(card_name, remote)
+        imgs = get_card_images(card_name, scryfall_id, remote)
 
         if not imgs:
             print(f"\n[ERROR] Could not find an image for '{card_name}'. Aborting.")
