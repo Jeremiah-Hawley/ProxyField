@@ -36,72 +36,42 @@ BICUBIC_ALGORITHM = "BICUBIC"
 BASIC_LANDS = ["Plains", "Island", "Swamp", "Mountain", "Forest"]
 land_filter = False #has to be declared here and changed later
 
-def get_tokens_for_pdf(deck_url: str) -> list[list[Image.Image]]:
-    #create a list of IDs
-    token_list = []
-    if token_filter:
-        token_board = data.get("tokens", [])  # default to [] not {}
-        for card in token_board:              # iterate directly, no .values()
-            card_is_token = card.get("isToken", False)
-            print(str(card.get("name","")) + type(card_is_token))
-            if card_is_token == "true" or card_is_token == True:
-                print(card.get("name", "something is wrong"))    #for card in test_board:
-    # [NON-FUNCTIONAL] Token image fetching incomplete — requires rewrite with proper Moxfield API parsing
+def get_tokens_from_moxfield(moxfield_data: dict) -> list[dict]:
     """
-    #turn that into a list of images
-    token_images = []
-    for token in token_list:
-        try:
-            response = requests.get(
-                "https://api.scryfall.com/cards/named",
-                params={"fuzzy": card_name},
-                timeout=10
-            )
-            
-            response.raise_for_status()
-            data = response.json()
+    Extract tokens from Moxfield API data.
+    Filters for items where isToken == true (case-insensitive comparison).
+    Returns list of dicts: {"name": str, "scryfall_id": str}
+    """
+    tokens = []
+    token_board = moxfield_data.get("tokens", [])
 
-            image_uris = data.get("image_uris")
+    if not isinstance(token_board, list):
+        print(f"  [Tokens] Unexpected token board format: {type(token_board)}")
+        return tokens
 
-            # Single faced card
-            if image_uris:
-                image_url = (
-                    image_uris.get("png") or
-                    image_uris.get("large") or
-                    image_uris.get("normal")
-                )
-                img_response = requests.get(image_url, timeout=10)
-                img_response.raise_for_status()
-                token_images.append([Image.open(BytesIO(img_response.content))])
+    for card_entry in token_board:
+        # Check if this is actually a token
+        is_token = card_entry.get("isToken", False)
 
-        # Double-faced card — fetch both faces
-            card_faces = data.get("card_faces", [])
-            if card_faces:
-                images = []
-                for face in card_faces:
-                    face_uris = face.get("image_uris", {})
-                    face_url = (
-                        face_uris.get("png") or
-                        face_uris.get("large") or
-                        face_uris.get("normal")
-                    )
-                    if face_url:
-                        img_response = requests.get(face_url, timeout=10)
-                        img_response.raise_for_status()
-                        images.append(Image.open(BytesIO(img_response.content)))
-                if images:
-                    token_images.append(images)
+        # Handle both string and boolean values for isToken
+        if isinstance(is_token, str):
+            is_token = is_token.lower() == "true"
+        elif not isinstance(is_token, bool):
+            is_token = False
 
-            print(f"  [Scryfall] No image URLs found for '{card_name}'")
+        if is_token:
+            card_data = card_entry.get("card", {})
+            token_name = card_data.get("name", "Unknown Token")
+            scryfall_id = card_data.get("id", "")
 
-        except Exception as e:
-            print(f"  [Scryfall] Failed to fetch '{card_name}': {e}")
-    
-    return token_images
-"""
+            if token_name and token_name != "Unknown Token":
+                tokens.append({"name": token_name, "scryfall_id": scryfall_id})
+                print(f"  [Tokens] Found: {token_name}")
+
+    return tokens
 
 
-def read_url(deck_url: str, land_filter: bool) -> list[dict]:
+def read_url(deck_url: str, land_filter: bool, include_tokens: bool = False) -> list[dict]:
     match = re.search(r"moxfield\.com/decks/([A-Za-z0-9_-]+)", deck_url)
     if match:
         deck_id = match.group(1)
@@ -138,6 +108,12 @@ def read_url(deck_url: str, land_filter: bool) -> list[dict]:
             raise ValueError(f"Deck '{deck_id}' appears to be empty or could not be parsed.")
 
     card_lines = [card for card in card_lines if card["name"] not in BASIC_LANDS] if land_filter else card_lines
+
+    # Append tokens if requested
+    if include_tokens:
+        tokens = get_tokens_from_moxfield(data)
+        print(f"\n  [Tokens] Added {len(tokens)} tokens to deck")
+        card_lines.extend(tokens)
 
     return card_lines
 
@@ -551,7 +527,7 @@ def ProxyField():
 
     # tags read, now need to create the deck list
     if from_url:
-        deck_list = read_url(deck_url, land_filter)
+        deck_list = read_url(deck_url, land_filter, include_tokens=token_filter)
     elif from_file:
         deck_list = read_decklist_file(deck_filepath)
 
@@ -595,7 +571,7 @@ def PFGUI():
         def fetch():
             nonlocal deck_list
             try:
-                deck_list = read_url(url_string, basic_land_filter)
+                deck_list = read_url(url_string, basic_land_filter, include_tokens=token_filter)
                 # Schedule UI update back on the main thread
                 root.after(0, on_fetch_done)
             except Exception as e:
