@@ -518,13 +518,13 @@ def build_pdf(
 
     page_width, page_height = letter
 
-    card_w = CARD_WIDTH_MM  * mm
+    card_w = CARD_WIDTH_MM * mm
     card_h = CARD_HEIGHT_MM * mm
-    gap    = 1 * mm
+    gap = 1 * mm
 
-    grid_width  = CARDS_PER_ROW * card_w + (CARDS_PER_ROW - 1) * gap
+    grid_width = CARDS_PER_ROW * card_w + (CARDS_PER_ROW - 1) * gap
     grid_height = CARDS_PER_COL * card_h + (CARDS_PER_COL - 1) * gap
-    x_margin = (page_width  - grid_width)  / 2
+    x_margin = (page_width - grid_width) / 2
     y_margin = (page_height - grid_height) / 2
 
     c = canvas.Canvas(output_path, pagesize=letter)
@@ -533,58 +533,49 @@ def build_pdf(
 
     print(f"\nBuilding PDF: {total_cards} cards, {total_pages} front page(s) + {total_pages} back page(s)...")
 
-    # Fetch all images upfront so we can build front and back pages together
-    all_images = []
-    for idx, card_data in enumerate(deck_list):
-        card_name = card_data["name"]
-        scryfall_id = card_data.get("scryfall_id", "")
-        print(f"[{idx + 1}/{total_cards}] Fetching '{card_name}'...")
-        imgs = get_card_images(
-            card_name,
-            scryfall_id,
-            remote,
-            use_upscaling=use_upscaling,
-            upscale_algorithm=upscale_algorithm
-        )
+    # Stream pages one at a time
+    for page_num in range(total_pages):
+        try:
+            # Fetch 9 cards for this page
+            print(f"[Page {page_num + 1}/{total_pages}] Fetching cards...")
+            page_images = fetch_page_cards(
+                deck_list,
+                page_num,
+                remote,
+                use_upscaling,
+                upscale_algorithm
+            )
 
-        if not imgs:
-            print(f"\n[ERROR] Could not find an image for '{card_name}'. Aborting.")
+            # Draw front + back pages
+            print(f"[Page {page_num + 1}/{total_pages}] Drawing...")
+            draw_page_pair(
+                c,
+                page_images,
+                page_width,
+                page_height,
+                card_w,
+                card_h,
+                x_margin,
+                y_margin,
+                gap
+            )
+
+            # Explicitly free memory for this page
+            del page_images
+
+            # Update progress bar: fetching+drawing = 0-90% of progress
+            if progress_var is not None:
+                progress_var.set((page_num + 1) / total_pages * 90)
+
+            print(f"Page {page_num + 1} of {total_pages} (front+back) complete")
+
+        except Exception as e:
+            print(f"\n[ERROR] Page {page_num + 1}: {e}")
             raise SystemExit(1)
 
-        all_images.append(imgs)
-
-        # Update progress bar: fetching images = 0-90% of progress
-        if progress_var is not None:
-            progress_var.set((idx + 1) / total_cards * 90)
-
-    # Build pages in front/back pairs
-    for page_num in range(total_pages):
-        page_slice = all_images[page_num * CARDS_PER_PAGE : (page_num + 1) * CARDS_PER_PAGE]
-
-        # --- Front page ---
-        front_images = [imgs[0] for imgs in page_slice]
-        draw_card_grid(c, front_images, page_width, page_height, card_w, card_h, x_margin, y_margin, gap)
-        c.showPage()
-
-        # --- Back page ---
-        back_images = []
-        for row in range(CARDS_PER_COL):
-            row_slice = page_slice[row * CARDS_PER_ROW : (row + 1) * CARDS_PER_ROW]
-            row_backs = [imgs[1] if len(imgs) > 1 else imgs[0] for imgs in row_slice]
-            while len(row_backs) < CARDS_PER_ROW:
-                row_backs.append(None)
-            back_images.extend(reversed(row_backs))
-
-        draw_card_grid(c, back_images, page_width, page_height, card_w, card_h, x_margin, y_margin, gap)
-        c.showPage()
-
-        # Update progress bar: building pages = 90-100% of progress
-        if progress_var is not None:
-            progress_var.set(90 + (page_num + 1) / total_pages * 10)
-
+    # Finalize PDF
     c.save()
 
-    # Set progress to 100% when done
     if progress_var is not None:
         progress_var.set(100)
 
