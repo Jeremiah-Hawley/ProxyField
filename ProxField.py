@@ -598,6 +598,7 @@ def ProxyField():
     parser.add_argument("-b", "--basic-lands", action="store_true", help="Filter out basic lands (don't include them in PDF)")
     parser.add_argument("-l","--enable-local",action="store_true",help="searches local card images in ./storage/ before asking scryfall")
     parser.add_argument("-t", "--tokens", action="store_true", help="adds all tokens to the pdf")
+    parser.add_argument("-k", "--ink-saver", action="store_true", help="skip printing card backs for single-faced cards (save ink)")
 
     args = parser.parse_args()
 
