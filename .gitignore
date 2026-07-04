@@ -1,0 +1,5 @@
+docs/
+tests/
+Storage/
+.claude/
+__pycache__/
