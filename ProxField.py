@@ -172,54 +172,84 @@ def get_local_image_path(card_name: str) -> str | None:
 def get_token_scryfall_imagesfall_images(card_id: str) ->list[Image.Image]:  # [NON-FUNCTIONAL] Stub implementation, function name has typo
     return []
 
-def get_scryfall_images(card_name: str) -> list[Image.Image]:
+def extract_images_from_scryfall_data(data: dict) -> list[Image.Image]:
+    """Extract images from Scryfall card data (handles single and double-faced cards)."""
+    images = []
+
+    # Single-faced card
+    image_uris = data.get("image_uris")
+    if image_uris:
+        image_url = (
+            image_uris.get("png") or
+            image_uris.get("large") or
+            image_uris.get("normal")
+        )
+        if image_url:
+            img_response = requests.get(image_url, timeout=(2, 5))
+            img_response.raise_for_status()
+            images.append(Image.open(BytesIO(img_response.content)))
+        return images
+
+    # Double-faced card
+    card_faces = data.get("card_faces", [])
+    if card_faces:
+        for face in card_faces:
+            face_uris = face.get("image_uris", {})
+            face_url = (
+                face_uris.get("png") or
+                face_uris.get("large") or
+                face_uris.get("normal")
+            )
+            if face_url:
+                img_response = requests.get(face_url, timeout=(2, 5))
+                img_response.raise_for_status()
+                images.append(Image.open(BytesIO(img_response.content)))
+        return images if images else []
+
+    return []
+
+def get_scryfall_images(card_name: str, scryfall_id: str = "") -> list[Image.Image]:
     """
     Fetches card image(s) from Scryfall.
+    If scryfall_id is provided, uses direct ID lookup (faster, no fuzzy matching).
+    Falls back to fuzzy search by card name if ID lookup fails or no ID provided.
     Returns a list with one image for normal cards, two for double-faced cards.
     """
     try:
-        response = requests.get(
-            "https://api.scryfall.com/cards/named",
-            params={"fuzzy": card_name},
-            timeout=(2,5)
-        )
-        response.raise_for_status()
-        data = response.json()
+        data = None
 
-        image_uris = data.get("image_uris")
-
-        # Single faced card
-        if image_uris:
-            image_url = (
-                image_uris.get("png") or
-                image_uris.get("large") or
-                image_uris.get("normal")
-            )
-            img_response = requests.get(image_url, timeout=(2,5))
-
-            img_response.raise_for_status()
-            return [Image.open(BytesIO(img_response.content))]
-
-        # Double-faced card — fetch both faces
-        card_faces = data.get("card_faces", [])
-        if card_faces:
-            images = []
-            for face in card_faces:
-                face_uris = face.get("image_uris", {})
-                face_url = (
-                    face_uris.get("png") or
-                    face_uris.get("large") or
-                    face_uris.get("normal")
+        # Try direct ID lookup first if we have it
+        if scryfall_id:
+            try:
+                response = requests.get(
+                    f"https://api.scryfall.com/cards/{scryfall_id}",
+                    timeout=(2, 5)
                 )
-                if face_url:
-                    img_response = requests.get(face_url, timeout=(2,5))
-                    img_response.raise_for_status()
-                    images.append(Image.open(BytesIO(img_response.content)))
-            if images:
-                return images
+                if response.status_code == 200:
+                    data = response.json()
+                    print(f"  [Scryfall] Fetched '{card_name}' via ID")
+            except Exception as e:
+                print(f"  [Scryfall] ID lookup failed for {scryfall_id}: {e}, trying fuzzy search...")
 
-        print(f"  [Scryfall] No image URLs found for '{card_name}'")
-        return []
+        # Fallback to fuzzy search if ID lookup didn't work
+        if data is None:
+            response = requests.get(
+                "https://api.scryfall.com/cards/named",
+                params={"fuzzy": card_name},
+                timeout=(2, 5)
+            )
+            response.raise_for_status()
+            data = response.json()
+            print(f"  [Scryfall] Fetched '{card_name}' via fuzzy search")
+
+        # Extract images from the data
+        images = extract_images_from_scryfall_data(data)
+
+        if not images:
+            print(f"  [Scryfall] No image URLs found for '{card_name}'")
+            return []
+
+        return images
 
     except Exception as e:
         print(f"  [Scryfall] Failed to fetch '{card_name}': {e}")
@@ -246,7 +276,7 @@ def get_card_images(card_name: str, scryfall_id: str, remote: bool) -> list[Imag
         print(f"  [Local] '{card_name}' not found locally, trying Scryfall...")
 
     print(f"  [Scryfall] Fetching '{card_name}'...")
-    scryfall_images = get_scryfall_images(card_name)
+    scryfall_images = get_scryfall_images(card_name, scryfall_id)
     time.sleep(SLEEP_AMOUNT)
 
     # DFC — already has both faces from Scryfall
