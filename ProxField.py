@@ -18,6 +18,8 @@ from io import BytesIO
 from curl_cffi import requests as curl_requests
 
 import tkinter as tk
+
+SCRYFALL_HEADERS = {"User-Agent": "ProxyField/1.0 (https://github.com/user/ProxyField)"}
 from tkinter.ttk import *
 from tkinter import filedialog
 
@@ -60,9 +62,9 @@ def get_tokens_from_moxfield(moxfield_data: dict) -> list[dict]:
             is_token = False
 
         if is_token:
-            card_data = card_entry.get("card", {})
-            token_name = card_data.get("name", "Unknown Token")
-            scryfall_id = card_data.get("id", "")
+            # Token fields are at the top level of the entry, not nested under "card"
+            token_name = card_entry.get("name", "Unknown Token")
+            scryfall_id = card_entry.get("scryfall_id", "")
 
             if token_name and token_name != "Unknown Token":
                 tokens.append({"name": token_name, "scryfall_id": scryfall_id})
@@ -101,7 +103,7 @@ def read_url(deck_url: str, land_filter: bool, include_tokens: bool = False) -> 
             quantity = card_entry.get("quantity", 1)
             card_data = card_entry["card"]
             card_name = card_data["name"]
-            scryfall_id = card_data.get("id", "")
+            scryfall_id = card_data.get("scryfall_id", "")
             for _ in range(quantity):
                 card_lines.append({"name": card_name, "scryfall_id": scryfall_id})
         if not card_lines:
@@ -239,7 +241,7 @@ def extract_images_from_scryfall_data(data: dict) -> list[Image.Image]:
             image_uris.get("normal")
         )
         if image_url:
-            img_response = requests.get(image_url, timeout=(2, 5))
+            img_response = requests.get(image_url, headers=SCRYFALL_HEADERS, timeout=(2, 5))
             img_response.raise_for_status()
             images.append(Image.open(BytesIO(img_response.content)))
         return images
@@ -255,7 +257,7 @@ def extract_images_from_scryfall_data(data: dict) -> list[Image.Image]:
                 face_uris.get("normal")
             )
             if face_url:
-                img_response = requests.get(face_url, timeout=(2, 5))
+                img_response = requests.get(face_url, headers=SCRYFALL_HEADERS, timeout=(2, 5))
                 img_response.raise_for_status()
                 images.append(Image.open(BytesIO(img_response.content)))
         return images if images else []
@@ -277,6 +279,7 @@ def get_scryfall_images(card_name: str, scryfall_id: str = "") -> list[Image.Ima
             try:
                 response = requests.get(
                     f"https://api.scryfall.com/cards/{scryfall_id}",
+                    headers=SCRYFALL_HEADERS,
                     timeout=(2, 5)
                 )
                 if response.status_code == 200:
@@ -290,6 +293,7 @@ def get_scryfall_images(card_name: str, scryfall_id: str = "") -> list[Image.Ima
             response = requests.get(
                 "https://api.scryfall.com/cards/named",
                 params={"fuzzy": card_name},
+                headers=SCRYFALL_HEADERS,
                 timeout=(2, 5)
             )
             response.raise_for_status()
