@@ -84,7 +84,7 @@ def read_url(deck_url: str, land_filter: bool, include_tokens: bool = False) -> 
 
     api_url = f"https://api2.moxfield.com/v2/decks/all/{deck_id}"
 
-    response = curl_requests.get(api_url, impersonate="chrome120", timeout=(2,5))
+    response = curl_requests.get(api_url, impersonate="chrome120", timeout=(10,30))
 
     if response.status_code == 403:
         raise SystemExit("[ERROR] Moxfield returned 403 Forbidden — the deck may be private.")
@@ -241,7 +241,7 @@ def extract_images_from_scryfall_data(data: dict) -> list[Image.Image]:
             image_uris.get("normal")
         )
         if image_url:
-            img_response = requests.get(image_url, headers=SCRYFALL_HEADERS, timeout=(2, 5))
+            img_response = requests.get(image_url, headers=SCRYFALL_HEADERS, timeout=(10, 30))
             img_response.raise_for_status()
             images.append(Image.open(BytesIO(img_response.content)))
         return images
@@ -674,7 +674,7 @@ def PFGUI():
         url_entry.delete(0, tk.END)
 
         # Show progress bar, disable buttons while working
-        progress.grid(row=5, column=1, columnspan=3, padx=10, pady=5)
+        progress.grid(row=6, column=1, columnspan=3, padx=10, pady=5)
         progress_var.set(0)
         submit_button.config(state="disabled")
         save_button.grid_remove()
@@ -749,7 +749,8 @@ def PFGUI():
     # --- Variables ---
     root = tk.Tk()
     root.title("ProxyField")
-    root.geometry("400x200")
+    root.geometry("400x350")
+    root.configure(bg="white")
 
     progress_var = tk.DoubleVar(value=0)
 
@@ -829,7 +830,7 @@ def PFGUI():
 
     # Status label
     status_label = tk.Label(root, text="", font=("calibre", 8))
-    status_label.grid(row=6, column=1, columnspan=3)
+    status_label.grid(row=7, column=1, columnspan=3)
 
     # Progress bar (hidden until submit is pressed)
     progress = Progressbar(root, orient="horizontal", length=200, mode='determinate', variable=progress_var)
