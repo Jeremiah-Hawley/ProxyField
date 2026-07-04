@@ -438,7 +438,7 @@ def fetch_page_cards(deck_list, page_num, remote, use_upscaling, upscale_algorit
 
     return page_images
 
-def draw_page_pair(canvas_obj, page_images, page_width, page_height, card_w, card_h, x_margin, y_margin, gap):
+def draw_page_pair(canvas_obj, page_images, page_width, page_height, card_w, card_h, x_margin, y_margin, gap, skip_single_backs=False):
     """
     Draw front page, then back page for one page's cards.
 
@@ -478,7 +478,17 @@ def draw_page_pair(canvas_obj, page_images, page_width, page_height, card_w, car
         row_slice = page_images[row_start:row_end]
 
         # Extract back images (index 1), or front if single-faced
-        row_backs = [imgs[1] if len(imgs) > 1 else imgs[0] for imgs in row_slice]
+        row_backs = []
+        for imgs in row_slice:
+            if skip_single_backs and len(imgs) == 1:
+                # Single-faced card with ink saver enabled: leave blank
+                row_backs.append(None)
+            elif len(imgs) > 1:
+                # Double-faced or multi-faced: use back face
+                row_backs.append(imgs[1])
+            else:
+                # Single-faced without ink saver: use card back
+                row_backs.append(imgs[0])
 
         # Pad to 3 cards
         while len(row_backs) < CARDS_PER_ROW:
