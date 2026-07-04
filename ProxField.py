@@ -654,7 +654,8 @@ def ProxyField():
         remote,
         pdf_file_name,
         use_upscaling=True,  # Always upscale in CLI
-        upscale_algorithm=BICUBIC_ALGORITHM  # Use BICUBIC for CLI
+        upscale_algorithm=BICUBIC_ALGORITHM,  # Use BICUBIC for CLI
+        skip_single_backs=args.ink_saver
     )
 
 def PFGUI():
@@ -726,7 +727,8 @@ def PFGUI():
                     file_name,
                     progress_var,
                     use_upscaling=collection_gui_input.get(),  # Only upscale if collecting
-                    upscale_algorithm=algo
+                    upscale_algorithm=algo,
+                    skip_single_backs=ink_saver_gui_input.get()
                 )
                 root.after(0, on_build_done)
             except Exception as e:
@@ -799,6 +801,18 @@ def PFGUI():
                    selectcolor="green",
                    relief="raised",
                    padx=10, pady=5).grid(row=4, column=3)
+
+    # Ink Saver Check Box
+    ink_saver_gui_input = tk.BooleanVar()
+    tk.Checkbutton(root,
+                   text="Ink Saver",
+                   variable=ink_saver_gui_input,
+                   onvalue=True, offvalue=False,
+                   bg="lightgrey", fg="blue",
+                   font=("calibre", 8),
+                   selectcolor="green",
+                   relief="raised",
+                   padx=10, pady=5).grid(row=5, column=3)
 
     # URL label and entry
     tk.Label(root, text='URL: ', font=('calibre', 10, 'bold')).grid(row=1, column=1)
