@@ -30,6 +30,9 @@ CARDS_PER_ROW   = 3
 CARDS_PER_COL   = 3
 CARDS_PER_PAGE  = CARDS_PER_ROW * CARDS_PER_COL
 PROGRESS        = 0 #store progress bar value here
+UPSCALE_DPI = 1200  # Target DPI for printing
+LANCZOS_ALGORITHM = "LANCZOS"
+BICUBIC_ALGORITHM = "BICUBIC"
 BASIC_LANDS = ["Plains", "Island", "Swamp", "Mountain", "Forest"]
 land_filter = False #has to be declared here and changed later
 
@@ -172,6 +175,81 @@ def get_local_image_path(card_name: str) -> str | None:
 def get_token_scryfall_imagesfall_images(card_id: str) ->list[Image.Image]:  # [NON-FUNCTIONAL] Stub implementation, function name has typo
     return []
 
+def calculate_upscale_dimensions(dpi: int = UPSCALE_DPI) -> tuple[int, int]:
+    """
+    Calculate target pixel dimensions for upscaling based on DPI.
+    MTG card size: 63mm × 88mm
+    Returns: (width_px, height_px)
+    """
+    # Convert mm to inches, then multiply by DPI
+    card_width_inches = CARD_WIDTH_MM / 25.4  # 63mm = 2.48 inches
+    card_height_inches = CARD_HEIGHT_MM / 25.4  # 88mm = 3.46 inches
+
+    target_width = int(card_width_inches * dpi)
+    target_height = int(card_height_inches * dpi)
+
+    return (target_width, target_height)
+
+def upscale_image(image: Image.Image, algorithm: str = BICUBIC_ALGORITHM) -> Image.Image:
+    """
+    Upscale image to 1200 DPI print quality.
+
+    Args:
+        image: PIL Image to upscale
+        algorithm: "LANCZOS" (high quality, slower) or "BICUBIC" (balanced)
+
+    Returns:
+        Upscaled PIL Image
+
+    Raises:
+        ValueError: If upscaling fails or algorithm is invalid
+    """
+    try:
+        target_width, target_height = calculate_upscale_dimensions(UPSCALE_DPI)
+
+        # Select resample filter
+        if algorithm == LANCZOS_ALGORITHM:
+            resample = Image.LANCZOS
+        elif algorithm == BICUBIC_ALGORITHM:
+            resample = Image.BICUBIC
+        else:
+            raise ValueError(f"Unknown upscaling algorithm: {algorithm}")
+
+        # Upscale the image
+        upscaled = image.resize((target_width, target_height), resample=resample)
+
+        return upscaled
+
+    except Exception as e:
+        raise ValueError(f"Failed to upscale image: {e}")
+
+def get_cached_upscaled_image(scryfall_id: str) -> Image.Image | None:
+    """Check if upscaled image exists in cache and return it."""
+    if not scryfall_id:
+        return None
+
+    cache_path = os.path.join(LOCAL_IMAGE_DIR, f"{scryfall_id}.upscaled.png")
+    if os.path.exists(cache_path):
+        try:
+            return Image.open(cache_path)
+        except Exception as e:
+            print(f"  [Cache] Failed to load cached image {scryfall_id}: {e}")
+            return None
+
+    return None
+
+def save_upscaled_image_to_cache(image: Image.Image, scryfall_id: str) -> None:
+    """Save upscaled image to cache."""
+    if not scryfall_id:
+        return
+
+    try:
+        os.makedirs(LOCAL_IMAGE_DIR, exist_ok=True)
+        cache_path = os.path.join(LOCAL_IMAGE_DIR, f"{scryfall_id}.upscaled.png")
+        image.save(cache_path, "PNG")
+    except Exception as e:
+        print(f"  [Cache] Failed to save upscaled image {scryfall_id}: {e}")
+
 def extract_images_from_scryfall_data(data: dict) -> list[Image.Image]:
     """Extract images from Scryfall card data (handles single and double-faced cards)."""
     images = []
@@ -255,7 +333,13 @@ def get_scryfall_images(card_name: str, scryfall_id: str = "") -> list[Image.Ima
         print(f"  [Scryfall] Failed to fetch '{card_name}': {e}")
         return []
 
-def get_card_images(card_name: str, scryfall_id: str, remote: bool) -> list[Image.Image]:
+def get_card_images(
+    card_name: str,
+    scryfall_id: str,
+    remote: bool,
+    use_upscaling: bool = False,
+    upscale_algorithm: str = BICUBIC_ALGORITHM
+) -> list[Image.Image]:
     """
     Returns a list of PIL Images for the given card name and scryfall_id.
     Single-faced cards return [front, card_back_image].
@@ -278,6 +362,30 @@ def get_card_images(card_name: str, scryfall_id: str, remote: bool) -> list[Imag
     print(f"  [Scryfall] Fetching '{card_name}'...")
     scryfall_images = get_scryfall_images(card_name, scryfall_id)
     time.sleep(SLEEP_AMOUNT)
+
+    # Apply upscaling if requested
+    if use_upscaling and scryfall_images:
+        upscaled_images = []
+        for i, img in enumerate(scryfall_images):
+            # Check cache first
+            if scryfall_id and i == 0:  # Cache first image only (front face)
+                cached = get_cached_upscaled_image(scryfall_id)
+                if cached:
+                    print(f"  [Cache] Using cached upscaled image for '{card_name}'")
+                    upscaled_images.append(cached)
+                    continue
+
+            # Upscale and cache
+            try:
+                upscaled = upscale_image(img, upscale_algorithm)
+                if scryfall_id and i == 0:
+                    save_upscaled_image_to_cache(upscaled, scryfall_id)
+                upscaled_images.append(upscaled)
+            except ValueError as e:
+                print(f"\n[ERROR] {e}")
+                raise SystemExit(1)
+
+        scryfall_images = upscaled_images
 
     # DFC — already has both faces from Scryfall
     if len(scryfall_images) > 1:
@@ -309,7 +417,14 @@ def draw_card_grid(c, cards_with_images, page_width, page_height, card_w, card_h
             preserveAspectRatio=True
         )
 
-def build_pdf(deck_list: list[dict], remote: bool, output_path: str = "proxies.pdf", progress_var: tk.DoubleVar = None):
+def build_pdf(
+    deck_list: list[dict],
+    remote: bool,
+    output_path: str = "proxies.pdf",
+    progress_var: tk.DoubleVar = None,
+    use_upscaling: bool = False,
+    upscale_algorithm: str = BICUBIC_ALGORITHM
+) -> None:
     """
     Builds a proxy PDF from a deck list.
     Front pages: 3x3 grid of card fronts.
@@ -340,7 +455,13 @@ def build_pdf(deck_list: list[dict], remote: bool, output_path: str = "proxies.p
         card_name = card_data["name"]
         scryfall_id = card_data.get("scryfall_id", "")
         print(f"[{idx + 1}/{total_cards}] Fetching '{card_name}'...")
-        imgs = get_card_images(card_name, scryfall_id, remote)
+        imgs = get_card_images(
+            card_name,
+            scryfall_id,
+            remote,
+            use_upscaling=use_upscaling,
+            upscale_algorithm=upscale_algorithm
+        )
 
         if not imgs:
             print(f"\n[ERROR] Could not find an image for '{card_name}'. Aborting.")
@@ -440,7 +561,13 @@ def ProxyField():
     if args.name is not None:
         pdf_file_name = args.name
 
-    build_pdf(deck_list, remote, pdf_file_name)
+    build_pdf(
+        deck_list,
+        remote,
+        pdf_file_name,
+        use_upscaling=True,  # Always upscale in CLI
+        upscale_algorithm=BICUBIC_ALGORITHM  # Use BICUBIC for CLI
+    )
 
 def PFGUI():
     disable_local = False
@@ -503,7 +630,16 @@ def PFGUI():
 
         def build():
             try:
-                build_pdf(deck_list, disable_local, file_name, progress_var)
+                # Use LANCZOS if "Add to Collection" is on, BICUBIC otherwise
+                algo = LANCZOS_ALGORITHM if collection_gui_input.get() else BICUBIC_ALGORITHM
+                build_pdf(
+                    deck_list,
+                    disable_local,
+                    file_name,
+                    progress_var,
+                    use_upscaling=collection_gui_input.get(),  # Only upscale if collecting
+                    upscale_algorithm=algo
+                )
                 root.after(0, on_build_done)
             except Exception as e:
                 root.after(0, lambda err=e: on_build_error(str(err)))
