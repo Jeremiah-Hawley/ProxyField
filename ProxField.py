@@ -507,7 +507,8 @@ def build_pdf(
     output_path: str = "proxies.pdf",
     progress_var: tk.DoubleVar = None,
     use_upscaling: bool = False,
-    upscale_algorithm: str = BICUBIC_ALGORITHM
+    upscale_algorithm: str = BICUBIC_ALGORITHM,
+    skip_single_backs: bool = False
 ) -> None:
     """
     Builds a proxy PDF from a deck list.
@@ -557,7 +558,8 @@ def build_pdf(
                 card_h,
                 x_margin,
                 y_margin,
-                gap
+                gap,
+                skip_single_backs
             )
 
             # Explicitly free memory for this page
