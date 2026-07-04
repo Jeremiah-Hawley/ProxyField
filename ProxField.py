@@ -397,6 +397,47 @@ def draw_card_grid(c, cards_with_images, page_width, page_height, card_w, card_h
             preserveAspectRatio=True
         )
 
+def fetch_page_cards(deck_list, page_num, remote, use_upscaling, upscale_algorithm):
+    """
+    Fetch images for one page (up to 9 cards).
+
+    Args:
+        deck_list: Full deck list with {"name", "scryfall_id"} dicts
+        page_num: 0-indexed page number
+        remote: Use Scryfall only (True) or local first (False)
+        use_upscaling: Enable 1200 DPI upscaling
+        upscale_algorithm: "LANCZOS" or "BICUBIC"
+
+    Returns:
+        list[list[Image.Image]]: Up to 9 image pairs [front, back]
+
+    Raises:
+        Exception: If any card fails to fetch
+    """
+    start_idx = page_num * CARDS_PER_PAGE
+    end_idx = min(start_idx + CARDS_PER_PAGE, len(deck_list))
+
+    page_images = []
+    for card_idx in range(start_idx, end_idx):
+        card_data = deck_list[card_idx]
+        card_name = card_data["name"]
+        scryfall_id = card_data.get("scryfall_id", "")
+
+        imgs = get_card_images(
+            card_name,
+            scryfall_id,
+            remote,
+            use_upscaling=use_upscaling,
+            upscale_algorithm=upscale_algorithm
+        )
+
+        if not imgs:
+            raise Exception(f"Could not find image for '{card_name}'")
+
+        page_images.append(imgs)
+
+    return page_images
+
 def build_pdf(
     deck_list: list[dict],
     remote: bool,
@@ -716,4 +757,5 @@ def PFGUI():
     root.mainloop()
 
 
-ProxyField()
+if __name__ == "__main__":
+    ProxyField()
