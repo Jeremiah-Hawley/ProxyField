@@ -438,6 +438,69 @@ def fetch_page_cards(deck_list, page_num, remote, use_upscaling, upscale_algorit
 
     return page_images
 
+def draw_page_pair(canvas_obj, page_images, page_width, page_height, card_w, card_h, x_margin, y_margin, gap):
+    """
+    Draw front page, then back page for one page's cards.
+
+    Args:
+        canvas_obj: reportlab Canvas object
+        page_images: list[list[Image.Image]] — up to 9 image pairs [front, back]
+        page_width, page_height: Page dimensions in points
+        card_w, card_h: Card dimensions in points
+        x_margin, y_margin: Grid margins in points
+        gap: Gap between cards in points
+
+    Returns: None (modifies canvas)
+    """
+    # Extract front images (index 0 of each pair)
+    front_images = [imgs[0] for imgs in page_images]
+
+    # Draw front page
+    draw_card_grid(
+        canvas_obj,
+        front_images,
+        page_width,
+        page_height,
+        card_w,
+        card_h,
+        x_margin,
+        y_margin,
+        gap
+    )
+    canvas_obj.showPage()
+
+    # Build back page (mirrored/reversed for printing)
+    back_images = []
+    for row in range(CARDS_PER_COL):
+        row_start = row * CARDS_PER_ROW
+        row_end = row_start + CARDS_PER_ROW
+        # Slice this row from page_images
+        row_slice = page_images[row_start:row_end]
+
+        # Extract back images (index 1), or front if single-faced
+        row_backs = [imgs[1] if len(imgs) > 1 else imgs[0] for imgs in row_slice]
+
+        # Pad to 3 cards
+        while len(row_backs) < CARDS_PER_ROW:
+            row_backs.append(None)
+
+        # Reverse row for printing
+        back_images.extend(reversed(row_backs))
+
+    # Draw back page
+    draw_card_grid(
+        canvas_obj,
+        back_images,
+        page_width,
+        page_height,
+        card_w,
+        card_h,
+        x_margin,
+        y_margin,
+        gap
+    )
+    canvas_obj.showPage()
+
 def build_pdf(
     deck_list: list[dict],
     remote: bool,
