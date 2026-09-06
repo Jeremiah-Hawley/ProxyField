@@ -438,7 +438,7 @@ def fetch_page_cards(deck_list, page_num, remote, use_upscaling, upscale_algorit
 
     return page_images
 
-def draw_page_pair(canvas_obj, page_images, page_width, page_height, card_w, card_h, x_margin, y_margin, gap, skip_single_backs=False):
+def draw_page_pair(canvas_obj, page_images, page_width, page_height, card_w, card_h, x_margin, y_margin, gap, ink_saver=False):
     """
     Draw front page, then back page for one page's cards.
 
@@ -469,6 +469,10 @@ def draw_page_pair(canvas_obj, page_images, page_width, page_height, card_w, car
     )
     canvas_obj.showPage()
 
+    if ink_saver:
+        # Ink saver: no back page at all; multi-face backs are drawn at the end of the PDF
+        return
+
     # Build back page (mirrored/reversed for printing)
     back_images = []
     for row in range(CARDS_PER_COL):
@@ -480,14 +484,10 @@ def draw_page_pair(canvas_obj, page_images, page_width, page_height, card_w, car
         # Extract back images (index 1), or front if single-faced
         row_backs = []
         for imgs in row_slice:
-            if skip_single_backs and len(imgs) == 1:
-                # Single-faced card with ink saver enabled: leave blank
-                row_backs.append(None)
-            elif len(imgs) > 1:
+            if len(imgs) > 1:
                 # Double-faced or multi-faced: use back face
                 row_backs.append(imgs[1])
             else:
-                # Single-faced without ink saver: use card back
                 row_backs.append(imgs[0])
 
         # Pad to 3 cards
@@ -518,7 +518,7 @@ def build_pdf(
     progress_var: tk.DoubleVar = None,
     use_upscaling: bool = False,
     upscale_algorithm: str = BICUBIC_ALGORITHM,
-    skip_single_backs: bool = False
+    ink_saver: bool = False
 ) -> None:
     """
     Builds a proxy PDF from a deck list.
@@ -542,7 +542,13 @@ def build_pdf(
     total_cards = len(deck_list)
     total_pages = math.ceil(total_cards / CARDS_PER_PAGE)
 
-    print(f"\nBuilding PDF: {total_cards} cards, {total_pages} front page(s) + {total_pages} back page(s)...")
+    if ink_saver:
+        print(f"\nBuilding PDF (ink saver): {total_cards} cards, {total_pages} front page(s), no back pages...")
+    else:
+        print(f"\nBuilding PDF: {total_cards} cards, {total_pages} front page(s) + {total_pages} back page(s)...")
+
+    # ponytail: ink saver holds multi-face backs in memory until the end; fine for a deck's worth
+    extra_backs = []
 
     # Stream pages one at a time
     for page_num in range(total_pages):
@@ -557,6 +563,9 @@ def build_pdf(
                 upscale_algorithm
             )
 
+            if ink_saver:
+                extra_backs.extend(imgs[1] for imgs in page_images if len(imgs) > 1)
+
             # Draw front + back pages
             print(f"[Page {page_num + 1}/{total_pages}] Drawing...")
             draw_page_pair(
@@ -569,7 +578,7 @@ def build_pdf(
                 x_margin,
                 y_margin,
                 gap,
-                skip_single_backs
+                ink_saver
             )
 
             # Explicitly free memory for this page
@@ -579,11 +588,28 @@ def build_pdf(
             if progress_var is not None:
                 progress_var.set((page_num + 1) / total_pages * 90)
 
-            print(f"Page {page_num + 1} of {total_pages} (front+back) complete")
+            print(f"Page {page_num + 1} of {total_pages} complete")
 
         except Exception as e:
             print(f"\n[ERROR] Page {page_num + 1}: {e}")
             raise SystemExit(1)
+
+    # Ink saver: multi-face backs go at the end, after the tokens
+    for i in range(0, len(extra_backs), CARDS_PER_PAGE):
+        draw_card_grid(
+            c,
+            extra_backs[i:i + CARDS_PER_PAGE],
+            page_width,
+            page_height,
+            card_w,
+            card_h,
+            x_margin,
+            y_margin,
+            gap
+        )
+        c.showPage()
+    if extra_backs:
+        print(f"Added {len(extra_backs)} multi-faced card back(s) at the end")
 
     # Finalize PDF
     c.save()
@@ -610,7 +636,7 @@ def ProxyField():
     parser.add_argument("-b", "--basic-lands", action="store_true", help="Filter out basic lands (don't include them in PDF)")
     parser.add_argument("-l","--enable-local",action="store_true",help="searches local card images in ./storage/ before asking scryfall")
     parser.add_argument("-t", "--tokens", action="store_true", help="adds all tokens to the pdf")
-    parser.add_argument("-k", "--ink-saver", action="store_true", help="skip printing card backs for single-faced cards (save ink)")
+    parser.add_argument("-k", "--ink-saver", action="store_true", help="ink saver: skip all back pages; multi-faced card backs are printed at the end")
 
     args = parser.parse_args()
 
@@ -655,7 +681,7 @@ def ProxyField():
         pdf_file_name,
         use_upscaling=True,  # Always upscale in CLI
         upscale_algorithm=BICUBIC_ALGORITHM,  # Use BICUBIC for CLI
-        skip_single_backs=args.ink_saver
+        ink_saver=args.ink_saver
     )
 
 def PFGUI():
@@ -728,7 +754,7 @@ def PFGUI():
                     progress_var,
                     use_upscaling=collection_gui_input.get(),  # Only upscale if collecting
                     upscale_algorithm=algo,
-                    skip_single_backs=ink_saver_gui_input.get()
+                    ink_saver=ink_saver_gui_input.get()
                 )
                 root.after(0, on_build_done)
             except Exception as e:
