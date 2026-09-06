@@ -7,6 +7,7 @@ import requests
 import re
 import threading
 import time
+from functools import lru_cache
 
 from time import sleep
 from reportlab.lib.utils import ImageReader
@@ -313,6 +314,13 @@ def get_scryfall_images(card_name: str, scryfall_id: str = "") -> list[Image.Ima
         print(f"  [Scryfall] Failed to fetch '{card_name}': {e}")
         return []
 
+@lru_cache(maxsize=1)
+def get_generic_card_back() -> Image.Image:
+    """The generic MTG card back, loaded once. Identity check tells it apart from a real back face."""
+    if not os.path.exists(CARD_BACK_PATH):
+        raise SystemExit(f"[ERROR] Card back image not found at '{CARD_BACK_PATH}'. Please add one.")
+    return Image.open(CARD_BACK_PATH)
+
 def get_card_images(
     card_name: str,
     scryfall_id: str,
@@ -327,10 +335,7 @@ def get_card_images(
     If remote is True:  Scryfall only.
     If remote is False: local first (single image), Scryfall as fallback.
     """
-    # Load the generic card back once, crash gracefully if it's missing
-    if not os.path.exists(CARD_BACK_PATH):
-        raise SystemExit(f"[ERROR] Card back image not found at '{CARD_BACK_PATH}'. Please add one.")
-    card_back = Image.open(CARD_BACK_PATH)
+    card_back = get_generic_card_back()
 
     if not remote:
         local_path = get_local_image_path(card_name)
@@ -438,7 +443,7 @@ def fetch_page_cards(deck_list, page_num, remote, use_upscaling, upscale_algorit
 
     return page_images
 
-def draw_page_pair(canvas_obj, page_images, page_width, page_height, card_w, card_h, x_margin, y_margin, gap, ink_saver=False):
+def draw_page_pair(canvas_obj, page_images, page_width, page_height, card_w, card_h, x_margin, y_margin, gap):
     """
     Draw front page, then back page for one page's cards.
 
@@ -468,10 +473,6 @@ def draw_page_pair(canvas_obj, page_images, page_width, page_height, card_w, car
         gap
     )
     canvas_obj.showPage()
-
-    if ink_saver:
-        # Ink saver: no back page at all; multi-face backs are drawn at the end of the PDF
-        return
 
     # Build back page (mirrored/reversed for printing)
     back_images = []
@@ -549,6 +550,15 @@ def build_pdf(
 
     # ponytail: ink saver holds multi-face backs in memory until the end; fine for a deck's worth
     extra_backs = []
+    pending = []  # ink saver: cards waiting for a full 9-up page
+
+    def flush_pending(final=False):
+        """Draw full pages out of `pending`; with final=True also draw a partial last page."""
+        while len(pending) >= CARDS_PER_PAGE or (final and pending):
+            chunk = pending[:CARDS_PER_PAGE]
+            del pending[:CARDS_PER_PAGE]
+            draw_card_grid(c, chunk, page_width, page_height, card_w, card_h, x_margin, y_margin, gap)
+            c.showPage()
 
     # Stream pages one at a time
     for page_num in range(total_pages):
@@ -563,23 +573,28 @@ def build_pdf(
                 upscale_algorithm
             )
 
-            if ink_saver:
-                extra_backs.extend(imgs[1] for imgs in page_images if len(imgs) > 1)
-
-            # Draw front + back pages
             print(f"[Page {page_num + 1}/{total_pages}] Drawing...")
-            draw_page_pair(
-                c,
-                page_images,
-                page_width,
-                page_height,
-                card_w,
-                card_h,
-                x_margin,
-                y_margin,
-                gap,
-                ink_saver
-            )
+            if ink_saver:
+                # Fronts only, in one continuous stream; DFC backs are queued for the end
+                extra_backs.extend(
+                    imgs[1] for imgs in page_images
+                    if len(imgs) > 1 and imgs[1] is not get_generic_card_back()
+                )
+                pending.extend(imgs[0] for imgs in page_images)
+                flush_pending()
+            else:
+                # Draw front + back pages
+                draw_page_pair(
+                    c,
+                    page_images,
+                    page_width,
+                    page_height,
+                    card_w,
+                    card_h,
+                    x_margin,
+                    y_margin,
+                    gap
+                )
 
             # Explicitly free memory for this page
             del page_images
@@ -594,22 +609,12 @@ def build_pdf(
             print(f"\n[ERROR] Page {page_num + 1}: {e}")
             raise SystemExit(1)
 
-    # Ink saver: multi-face backs go at the end, after the tokens
-    for i in range(0, len(extra_backs), CARDS_PER_PAGE):
-        draw_card_grid(
-            c,
-            extra_backs[i:i + CARDS_PER_PAGE],
-            page_width,
-            page_height,
-            card_w,
-            card_h,
-            x_margin,
-            y_margin,
-            gap
-        )
-        c.showPage()
-    if extra_backs:
-        print(f"Added {len(extra_backs)} multi-faced card back(s) at the end")
+    if ink_saver:
+        # Multi-faced backs trail the last fronts, filling the same page if there's room
+        pending.extend(extra_backs)
+        flush_pending(final=True)
+        if extra_backs:
+            print(f"Added {len(extra_backs)} multi-faced card back(s) at the end")
 
     # Finalize PDF
     c.save()
